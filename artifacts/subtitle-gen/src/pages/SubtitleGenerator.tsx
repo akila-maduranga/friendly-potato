@@ -1,7 +1,7 @@
-import React, { useState, useRef, useCallback, useEffect } from "react";
+import React, { useState, useRef, useCallback } from "react";
 import {
   UploadCloud, FileAudio, FileVideo, Download, AlertCircle,
-  Copy, FileText, Check, RefreshCw, Zap, ChevronRight,
+  Copy, FileText, Check, ChevronRight,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -25,17 +25,6 @@ interface TranscribeResponse {
   language_code: string;
   language_probability: number;
   words: Word[];
-}
-
-interface CreditInfo {
-  available: boolean;
-  reason?: string;
-  used?: number;
-  limit?: number;
-  remaining?: number;
-  tier?: string;
-  nextReset?: number | null;
-  status?: string | null;
 }
 
 // ─── Subtitle generation ──────────────────────────────────────────────────────
@@ -125,39 +114,6 @@ function formatDuration(seconds: number) {
   return `${m}m ${String(s).padStart(2, "0")}s`;
 }
 
-function creditsToMinutes(credits: number): string {
-  const mins = Math.floor(credits / 60);
-  if (mins < 1) return `${credits}s`;
-  return `~${mins}m audio`;
-}
-
-// Upload via XHR so we get real progress events
-function uploadWithProgress(
-  formData: FormData,
-  onUploadProgress: (pct: number) => void,
-): Promise<Response> {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open("POST", "/api/transcribe");
-
-    xhr.upload.addEventListener("progress", e => {
-      if (e.lengthComputable) onUploadProgress((e.loaded / e.total) * 100);
-    });
-
-    xhr.addEventListener("load", () => {
-      resolve(new Response(xhr.responseText, {
-        status: xhr.status,
-        statusText: xhr.statusText,
-        headers: { "Content-Type": "application/json" },
-      }));
-    });
-
-    xhr.addEventListener("error", () => reject(new Error("Network error")));
-    xhr.addEventListener("abort", () => reject(new Error("Upload aborted")));
-    xhr.send(formData);
-  });
-}
-
 // ─── Progress stages ──────────────────────────────────────────────────────────
 
 type Stage = "idle" | "uploading" | "transcribing" | "processing" | "done";
@@ -165,122 +121,19 @@ type Stage = "idle" | "uploading" | "transcribing" | "processing" | "done";
 const STAGE_LABELS: Record<Stage, string> = {
   idle: "",
   uploading: "Uploading file...",
-  transcribing: "Transcribing audio via Scribe-v2...",
+  transcribing: "Transcribing via Scribe-v2...",
   processing: "Processing results...",
   done: "Done",
 };
 
+// Progress ranges per stage (within 0–100)
 const STAGE_RANGE: Record<Stage, [number, number]> = {
   idle: [0, 0],
-  uploading: [0, 38],
-  transcribing: [40, 88],
+  uploading: [0, 30],
+  transcribing: [32, 88],
   processing: [90, 98],
   done: [100, 100],
 };
-
-// ─── Credit meter ─────────────────────────────────────────────────────────────
-
-function CreditMeter({ credits, loading, onRefresh }: {
-  credits: CreditInfo | null;
-  loading: boolean;
-  onRefresh: () => void;
-}) {
-  const remaining = credits?.remaining ?? 0;
-  const limit = credits?.limit ?? 0;
-  const pct = limit > 0 ? Math.max(0, (remaining / limit) * 100) : 0;
-  const barColor = pct > 50 ? "bg-primary" : pct > 20 ? "bg-yellow-400" : "bg-red-500";
-  const textColor = pct > 50 ? "text-primary" : pct > 20 ? "text-yellow-400" : "text-red-400";
-
-  const resetDate = credits?.nextReset
-    ? new Date(credits.nextReset * 1000).toLocaleDateString(undefined, { month: "short", day: "numeric" })
-    : null;
-
-  const isAvailable = credits?.available === true;
-
-  return (
-    <Card className="border-border bg-card" data-testid="credit-meter">
-      <CardContent className="p-4">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <Zap className="w-3.5 h-3.5 text-primary" />
-            <span className="text-xs font-mono uppercase tracking-wider text-muted-foreground">Credits</span>
-          </div>
-          <button
-            onClick={onRefresh}
-            disabled={loading}
-            className="text-muted-foreground hover:text-foreground transition-colors"
-            data-testid="btn-refresh-credits"
-            aria-label="Refresh credits"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
-          </button>
-        </div>
-
-        {isAvailable ? (
-          <>
-            <div className="h-1.5 w-full bg-muted rounded-full overflow-hidden mb-2.5">
-              <motion.div
-                className={`h-full rounded-full ${barColor}`}
-                initial={{ width: 0 }}
-                animate={{ width: `${pct}%` }}
-                transition={{ duration: 0.6, ease: "easeOut" }}
-              />
-            </div>
-
-            <div className="flex items-end justify-between">
-              <div>
-                <span className={`text-lg font-bold font-mono leading-none ${textColor}`}>
-                  {remaining.toLocaleString()}
-                </span>
-                <span className="text-xs text-muted-foreground ml-1">
-                  / {limit.toLocaleString()} remaining
-                </span>
-              </div>
-              <span className="text-xs text-muted-foreground font-mono">
-                {creditsToMinutes(remaining)}
-              </span>
-            </div>
-
-            <div className="flex items-center justify-between mt-2">
-              {credits?.tier && (
-                <Badge variant="outline" className="text-xs font-mono capitalize border-border text-muted-foreground px-1.5 py-0">
-                  {credits.tier}
-                </Badge>
-              )}
-              {resetDate && (
-                <span className="text-xs text-muted-foreground">resets {resetDate}</span>
-              )}
-            </div>
-          </>
-        ) : (
-          <div className="flex flex-col items-center justify-center gap-1.5 py-2">
-            {loading ? (
-              <span className="text-xs text-muted-foreground">Loading...</span>
-            ) : credits?.reason === "missing_permissions" ? (
-              <>
-                <span className="text-xs text-muted-foreground text-center leading-relaxed">
-                  API key needs <span className="font-mono text-foreground">user_read</span> scope
-                </span>
-                <a
-                  href="https://elevenlabs.io/app/settings/api-keys"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-xs text-primary hover:underline"
-                >
-                  Update key permissions →
-                </a>
-              </>
-            ) : (
-              <span className="text-xs text-muted-foreground">
-                {credits?.reason ?? "Unavailable"}
-              </span>
-            )}
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
 
 // ─── Progress panel ───────────────────────────────────────────────────────────
 
@@ -320,7 +173,7 @@ function ProgressPanel({ stage, progress }: { stage: Stage; progress: number }) 
           />
         </div>
 
-        {/* Label row */}
+        {/* Label + % */}
         <div className="flex items-center justify-between">
           <AnimatePresence mode="wait">
             <motion.span
@@ -357,28 +210,24 @@ export default function SubtitleGenerator() {
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
-  const [credits, setCredits] = useState<CreditInfo | null>(null);
-  const [creditsLoading, setCreditsLoading] = useState(false);
-
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const transcribeTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const fetchCredits = useCallback(async () => {
-    setCreditsLoading(true);
-    try {
-      const res = await fetch("/api/credits");
-      if (res.ok) setCredits(await res.json());
-    } finally {
-      setCreditsLoading(false);
-    }
-  }, []);
+  const clearTimer = () => {
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+  };
 
-  useEffect(() => { fetchCredits(); }, [fetchCredits]);
-
-  // Interpolate progress within a stage range
-  const setStageProgress = useCallback((s: Stage, pct: number) => {
+  // Smoothly tick progress toward a ceiling within the current stage's range
+  const startTick = useCallback((s: Stage, tickMs = 600) => {
+    clearTimer();
     const [lo, hi] = STAGE_RANGE[s];
-    setProgress(lo + (pct / 100) * (hi - lo));
+    let current = lo;
+    setProgress(lo);
+    timerRef.current = setInterval(() => {
+      const increment = Math.max(0.4, (hi - current) * 0.03);
+      current = Math.min(hi - 0.5, current + increment);
+      setProgress(current);
+    }, tickMs);
   }, []);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -412,30 +261,29 @@ export default function SubtitleGenerator() {
 
   const handleGenerate = async () => {
     if (!file) return;
+
     setIsTranscribing(true);
     setError(null);
+
+    // Stage 1 — uploading (simulated; ticks to ~30%)
     setStage("uploading");
-    setProgress(0);
+    // Estimate upload duration based on file size (~2 MB/s through proxy)
+    const uploadEstimateMs = Math.max(1500, (file.size / (2 * 1024 * 1024)) * 1000);
+    const uploadTickMs = uploadEstimateMs / 30; // ~30 ticks to fill the range
+    startTick("uploading", uploadTickMs);
 
     const formData = new FormData();
     formData.append("file", file);
 
     try {
-      // Phase 1 — real upload progress (maps to 0–38%)
-      const response = await uploadWithProgress(formData, pct => {
-        setStageProgress("uploading", pct);
-      });
+      const fetchPromise = fetch("/api/transcribe", { method: "POST", body: formData });
 
-      // Phase 2 — transcribing (maps to 40–88%), simulated tick
+      // Switch to transcribing stage after estimated upload completes
+      await new Promise(r => setTimeout(r, uploadEstimateMs));
       setStage("transcribing");
-      setStageProgress("transcribing", 0);
-      let transcribePct = 0;
-      transcribeTimerRef.current = setInterval(() => {
-        // Accelerates early, slows as it approaches the ceiling
-        const increment = Math.max(0.3, (88 - transcribePct) * 0.018);
-        transcribePct = Math.min(97, transcribePct + increment);
-        setStageProgress("transcribing", transcribePct);
-      }, 600);
+      startTick("transcribing", 700);
+
+      const response = await fetchPromise;
 
       if (!response.ok) {
         const body = await response.json().catch(() => ({}));
@@ -444,25 +292,23 @@ export default function SubtitleGenerator() {
 
       const data: TranscribeResponse = await response.json();
 
-      // Phase 3 — processing
-      clearInterval(transcribeTimerRef.current!);
+      // Stage 3 — processing
+      clearTimer();
       setStage("processing");
       setProgress(STAGE_RANGE["processing"][0]);
-
       await new Promise(r => setTimeout(r, 400));
+
+      // Done
       setStage("done");
       setProgress(100);
-
       await new Promise(r => setTimeout(r, 350));
+
       setResult(data);
       setIsTranscribing(false);
       setStage("idle");
 
-      // Refresh credits after a successful run
-      fetchCredits();
-
     } catch (err) {
-      if (transcribeTimerRef.current) clearInterval(transcribeTimerRef.current);
+      clearTimer();
       setIsTranscribing(false);
       setStage("idle");
       const msg = err instanceof Error ? err.message : "An unknown error occurred";
@@ -511,10 +357,9 @@ export default function SubtitleGenerator() {
 
       <main className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
 
-        {/* LEFT — upload + credit + progress */}
+        {/* LEFT — upload + progress */}
         <div className="lg:col-span-4 flex flex-col gap-4">
 
-          {/* Upload card */}
           <Card className="border-border bg-card shadow-2xl">
             <CardHeader className="pb-4">
               <CardTitle className="text-lg">Input Source</CardTitle>
@@ -587,10 +432,6 @@ export default function SubtitleGenerator() {
             </CardContent>
           </Card>
 
-          {/* Credit meter */}
-          <CreditMeter credits={credits} loading={creditsLoading} onRefresh={fetchCredits} />
-
-          {/* Progress panel */}
           <AnimatePresence>
             {isTranscribing && (
               <motion.div
