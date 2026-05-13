@@ -36,40 +36,89 @@ function formatVTTTime(seconds: number): string {
   return formatSRTTime(seconds).replace(",", ".");
 }
 
-function groupWordsIntoLines(words: Word[], maxWords = 8, maxDuration = 3): Word[][] {
+const MAX_LINE_CHARS = 42;   // broadcast standard per line
+const MAX_CUE_DURATION = 7;  // ITU-R BT.1089 max cue length
+const PAUSE_THRESHOLD = 0.4; // seconds of silence → force a break
+const MIN_CUE_GAP = 0.04;    // 40 ms gap between cues to avoid player overlap
+
+function groupWordsIntoLines(words: Word[]): Word[][] {
   const groups: Word[][] = [];
   const onlyWords = words.filter(w => w.type === "word");
   let current: Word[] = [];
-  for (const word of onlyWords) {
-    current.push(word);
-    const duration = word.end - current[0].start;
-    if (current.length >= maxWords || duration >= maxDuration) {
+
+  const flush = () => {
+    if (current.length > 0) {
       groups.push(current);
       current = [];
     }
+  };
+
+  for (let i = 0; i < onlyWords.length; i++) {
+    const word = onlyWords[i];
+    const prev = current[current.length - 1];
+
+    if (current.length === 0) {
+      current.push(word);
+      continue;
+    }
+
+    const currentText = current.map(w => w.text).join(" ");
+    const projectedText = currentText + " " + word.text;
+    const duration = word.end - current[0].start;
+
+    // Natural pause — speaker stopped talking
+    const silenceGap = word.start - prev.end;
+    const hasPause = silenceGap >= PAUSE_THRESHOLD;
+
+    // Sentence boundary on previous word
+    const prevEndsLine = /[.!?]$/.test(prev.text.trim());
+
+    // Hard limits
+    const tooLong = projectedText.length > MAX_LINE_CHARS;
+    const tooSlow = duration > MAX_CUE_DURATION;
+
+    if (hasPause || tooLong || tooSlow || (prevEndsLine && current.length >= 3)) {
+      flush();
+    }
+
+    current.push(word);
   }
-  if (current.length > 0) groups.push(current);
+
+  flush();
   return groups;
 }
 
-function generateSRT(words: Word[]): string {
+interface Cue {
+  start: number;
+  end: number;
+  text: string;
+}
+
+function buildCues(words: Word[]): Cue[] {
   const groups = groupWordsIntoLines(words);
-  return groups.map((group, i) => {
+  return groups.map((group, i, arr) => {
     const start = group[0].start;
-    const end = group[group.length - 1].end;
+    const rawEnd = group[group.length - 1].end;
+    // Trim end to just before the next cue starts (prevent overlap)
+    const nextStart = arr[i + 1]?.[0]?.start;
+    const end = nextStart !== undefined
+      ? Math.min(rawEnd, nextStart - MIN_CUE_GAP)
+      : rawEnd;
     const text = group.map(w => w.text).join(" ").trim();
-    return `${i + 1}\n${formatSRTTime(start)} --> ${formatSRTTime(end)}\n${text}`;
-  }).join("\n\n");
+    return { start, end: Math.max(start + 0.1, end), text };
+  });
+}
+
+function generateSRT(words: Word[]): string {
+  return buildCues(words).map((cue, i) =>
+    `${i + 1}\n${formatSRTTime(cue.start)} --> ${formatSRTTime(cue.end)}\n${cue.text}`
+  ).join("\n\n");
 }
 
 function generateVTT(words: Word[]): string {
-  const groups = groupWordsIntoLines(words);
-  const cues = groups.map((group, i) => {
-    const start = group[0].start;
-    const end = group[group.length - 1].end;
-    const text = group.map(w => w.text).join(" ").trim();
-    return `${formatVTTTime(start)} --> ${formatVTTTime(end)}\n${text}`;
-  }).join("\n\n");
+  const cues = buildCues(words).map(cue =>
+    `${formatVTTTime(cue.start)} --> ${formatVTTTime(cue.end)}\n${cue.text}`
+  ).join("\n\n");
   return `WEBVTT\n\n${cues}`;
 }
 
