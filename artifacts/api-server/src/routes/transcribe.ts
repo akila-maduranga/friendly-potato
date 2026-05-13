@@ -38,8 +38,15 @@ router.post("/transcribe", upload.single("file"), async (req, res): Promise<void
 
   if (!response.ok) {
     const errorText = await response.text();
+    let errorMessage = `ElevenLabs error (${response.status})`;
+    try {
+      const parsed = JSON.parse(errorText);
+      errorMessage = parsed?.detail?.message ?? parsed?.message ?? errorMessage;
+    } catch {
+      // keep the generic message
+    }
     req.log.error({ status: response.status, error: errorText }, "ElevenLabs API error");
-    res.status(response.status).json({ error: errorText });
+    res.status(response.status).json({ error: errorMessage });
     return;
   }
 

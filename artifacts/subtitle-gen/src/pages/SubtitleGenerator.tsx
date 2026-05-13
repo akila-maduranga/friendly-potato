@@ -233,7 +233,8 @@ export default function SubtitleGenerator() {
       });
       
       if (!response.ok) {
-        throw new Error(`Server error: ${response.statusText}`);
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.error ?? `Server error: ${response.statusText}`);
       }
       
       const data: TranscribeResponse = await response.json();
