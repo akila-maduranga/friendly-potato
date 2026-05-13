@@ -1,7 +1,7 @@
 {
   "buildCommand": "vite build",
   "outputDirectory": "dist/public",
-  "installCommand": "npm install",
+  "installCommand": "pnpm install",
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/$1" }
   ]
