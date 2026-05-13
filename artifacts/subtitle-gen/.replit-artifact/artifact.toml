@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "AI Subtitle Generator"
+version = "1.0.0"
+id = "artifacts/subtitle-gen"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 22463
+
+[services.development]
+run = "pnpm --filter @workspace/subtitle-gen run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/subtitle-gen", "run", "build" ]
+publicDir = "artifacts/subtitle-gen/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "22463"
+BASE_PATH = "/"
